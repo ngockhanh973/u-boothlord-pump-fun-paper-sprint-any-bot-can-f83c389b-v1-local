@@ -92,6 +92,9 @@ interface SentOrder {
 const tapes = new Map<string, CoinTape>();
 const held = new Map<string, Held>();
 const sent = new Map<string, SentOrder>();
+const fillStats = new Map<string, number>();
+let buyCount = 0;
+let sellCount = 0;
 
 function tapeOf(mint: string, slot: number, createPrice: number): CoinTape {
   let t = tapes.get(mint);
@@ -141,6 +144,12 @@ await runBot({
     // 1. Fills: a buy that did not fill frees the coin for another try.
     for (const f of batch.fills) {
       const s = sent.get(f.client_id);
+      const key = `${f.side}:${f.status}:${f.reason ?? ''}`;
+      fillStats.set(key, (fillStats.get(key) ?? 0) + 1);
+      if (f.status === 'filled') {
+        if (f.side === 'buy') buyCount += 1;
+        else sellCount += 1;
+      }
       if (s === undefined) continue;
       sent.delete(f.client_id);
       if (s.side === 'buy' && f.status !== 'filled') {
@@ -271,5 +280,16 @@ await runBot({
       }
     }
     return orders;
+  },
+
+  onDone(state: BotState): void {
+    // Diagnostics only; the harness reads stdout, this goes to stderr.
+    const cashSol = Number(state.cash) / 1e9;
+    const pnl = cashSol - 10;
+    const fills = [...fillStats.entries()].sort((a, b) => b[1] - a[1]);
+    console.error(
+      `[early-rider] done cash=${cashSol.toFixed(4)} pnl=${pnl.toFixed(4)} buys=${buyCount} sells=${sellCount} ` +
+        fills.map(([k, v]) => `${k}=${v}`).join(' '),
+    );
   },
 });
